@@ -2,6 +2,8 @@ use std::cmp::{max, min};
 
 use rand::{prelude::*, Rng};
 
+pub type MapPos = usize;
+
 #[derive(Debug)]
 pub struct MapRect {
     pub x1: usize,

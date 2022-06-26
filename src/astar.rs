@@ -5,7 +5,7 @@ use std::{
     collections::{BinaryHeap, HashMap},
 };
 
-use crate::map::{MapData, Tile};
+use crate::map::{MapData, MapPos, Tile};
 
 const NEIGHBORS: &[(isize, isize); 8] = &[
     (-1, -1),
@@ -18,36 +18,20 @@ const NEIGHBORS: &[(isize, isize); 8] = &[
     (1, 1),
 ];
 
-// from https://stackoverflow.com/a/39950148
-#[derive(Copy, Clone, PartialEq)]
-struct MinNonNan(f64);
-
-impl Eq for MinNonNan {}
-
-impl PartialOrd for MinNonNan {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        other.0.partial_cmp(&self.0)
-    }
-}
-
-impl Ord for MinNonNan {
-    fn cmp(&self, other: &MinNonNan) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
 // this was taken form the BinaryHeap docs
 #[derive(Copy, Clone, Eq, PartialEq)]
 struct State {
-    cost: MinNonNan,
-    pos: usize,
+    cost: isize,
+    pos: MapPos,
 }
 
 impl Ord for State {
     fn cmp(&self, other: &Self) -> Ordering {
-        // other.cost.cmp(&self.cost)
-        // .then_with(|| self.pos.cmp(&other.pos))
-        self.cost.cmp(&other.cost)
+        other
+            .cost
+            .cmp(&self.cost)
+            .then_with(|| self.pos.cmp(&other.pos))
+        // self.cost.cmp(&other.cost)
     }
 }
 
@@ -60,53 +44,50 @@ impl PartialOrd for State {
 #[derive(Default)]
 pub struct AStar {
     frontier: BinaryHeap<State>,
-    came_from: HashMap<usize, usize>,
-    cost_so_far: HashMap<usize, f64>,
+    came_from: HashMap<MapPos, MapPos>,
+    cost_so_far: HashMap<MapPos, isize>,
 }
 
 impl AStar {
     pub fn run(
         &mut self,
         map_data: &MapData,
-        start: usize,
-        end: usize,
-    ) -> HashMap<usize, usize> {
+        start: MapPos,
+        end: MapPos,
+    ) -> Vec<MapPos> {
         let map_width = map_data.map_width;
 
         let start_state = State {
-            cost: MinNonNan(0.0),
+            cost: 0,
             pos: start,
         };
 
         self.frontier.push(start_state);
 
-        // its more likely that 0 is a valid rathern the usize::MAX
+        // its more likely that 0 is a valid rather then usize::MAX
         self.came_from.insert(start, usize::MAX);
 
-        self.cost_so_far.insert(start, 0.0);
+        self.cost_so_far.insert(start, 0);
 
-        while !self.frontier.is_empty() {
-            // we know there is data from the !.is_empty()
-            let current = self.frontier.pop().unwrap();
-
+        while let Some(current) = self.frontier.pop() {
             if current.pos == end {
                 break;
             }
 
             for (o_x, o_y) in NEIGHBORS {
                 let new_pos =
-                    offset_position(current.pos, *o_x, *o_y, map_width);
+                    offset_position(*o_x, *o_y, current.pos, map_width);
 
                 if new_pos < 0 || new_pos >= map_data.map.len() as isize {
                     continue;
                 }
 
-                let new_pos = new_pos as usize;
+                let new_pos = new_pos as MapPos;
 
                 let tile_cost = if map_data.map[new_pos] == Tile::Wall {
-                    10.0
+                    100
                 } else {
-                    1.0
+                    1
                 };
 
                 let new_cost =
@@ -121,7 +102,7 @@ impl AStar {
                         new_cost + heuristic(end, new_pos, map_width);
 
                     let new_state = State {
-                        cost: MinNonNan(priority),
+                        cost: priority,
                         pos: new_pos,
                     };
 
@@ -132,24 +113,44 @@ impl AStar {
             }
         }
 
-        self.came_from.clone()
+        // make_path(&self.came_from, start, end, map_width)
+        make_path(&self.came_from, start, end)
     }
 }
 
-fn heuristic(a: usize, b: usize, width: usize) -> f64 {
-    let a_x = (a % width) as f64;
-    let a_y = (a / width) as f64;
+// Manhattan
+fn heuristic(a: MapPos, b: MapPos, width: usize) -> isize {
+    let a_x = (a % width) as isize;
+    let a_y = (a / width) as isize;
 
-    let b_x = (b % width) as f64;
-    let b_y = (b / width) as f64;
+    let b_x = (b % width) as isize;
+    let b_y = (b / width) as isize;
 
     (a_x - b_x).abs() + (a_y - b_y).abs()
 }
 
+// fn heuristic(a: MapPos, b: MapPos, width: usize) -> isize {
+//     let a_x = (a % width) as isize;
+//     let a_y = (a / width) as isize;
+//
+//     let b_x = (b % width) as isize;
+//     let b_y = (b / width) as isize;
+//
+//     let dx = (a_x - b_x).abs();
+//     let dy = (a_y - b_y).abs();
+//
+//     // 10 * (dx + dy) + 14 * std::cmp::min(dx, dy)
+//     if dx > dy {
+//         14 * dy + 10 * (dx - dy)
+//     } else {
+//         14 * dx + 10 * (dy - dx)
+//     }
+// }
+
 fn offset_position(
-    current: usize,
     offset_x: isize,
     offset_y: isize,
+    current: MapPos,
     width: usize,
 ) -> isize {
     let c_x = (current % width) as isize;
@@ -159,4 +160,61 @@ fn offset_position(
     let n_y = c_y + offset_y;
 
     n_x + (n_y * width as isize)
+}
+
+// fn smooth_path(
+//     current: (isize, isize),
+//     next: (isize, isize),
+// ) -> (usize, usize) {
+//     let mut ret_x = current.0;
+//     let mut ret_y = current.1;
+//
+//     for (o_x, o_y) in NEIGHBORS {
+//         let cn_x = current.0 + o_x;
+//         let cn_y = current.1 + o_y;
+//
+//         if cn_x == next.0 && cn_y == next.1 {
+//             break;
+//         }
+//     }
+//
+//     (ret_x as usize, ret_y as usize)
+// }
+
+fn make_path(
+    coordinates: &HashMap<MapPos, MapPos>,
+    start: MapPos,
+    end: MapPos,
+    // map_width: usize,
+) -> Vec<MapPos> {
+    let mut path = vec![];
+
+    let mut current = *coordinates.get(&end).unwrap();
+
+    while current != start {
+        path.push(current);
+        current = *coordinates.get(&current).unwrap();
+        // let next = *coordinates.get(&current).unwrap();
+
+        // let c_x = current % map_width;
+        // let c_y = current / map_width;
+
+        // let n_x = next % map_width;
+        // let n_y = next / map_width;
+
+        // let new_current = smooth_path(
+        //     (c_x as isize, c_y as isize),
+        //     (n_x as isize, n_y as isize),
+        // );
+
+        // let new_pos = (new_current.0 + (new_current.1 * map_width)) as usize;
+
+        // path.push(new_pos);
+
+        // current = next;
+    }
+
+    path.push(start);
+
+    path
 }
